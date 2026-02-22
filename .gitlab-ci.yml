@@ -1,0 +1,57 @@
+# GitLab CI — custom Keep images for SVT/NEO
+#
+# Branch: svt/custom-patches
+# Runner:  k8s (Kaniko builds — no Docker daemon required)
+#
+# Images produced:
+#   $CI_REGISTRY_IMAGE/keep-frontend:<UPSTREAM_VERSION>-svt.<pipeline_iid>
+#   $CI_REGISTRY_IMAGE/keep-frontend:latest-svt
+#
+# To add a new patch: commit the change, the next pipeline run picks it up.
+# To add a backend image: duplicate the frontend job, point at docker/Dockerfile.api.
+
+stages:
+  - build
+
+variables:
+  # Match the upstream release this branch is based on.
+  UPSTREAM_VERSION: "0.49.0"
+
+  # Derived tag — e.g. 0.49.0-svt.12
+  SVT_IMAGE_TAG: "${UPSTREAM_VERSION}-svt.${CI_PIPELINE_IID}"
+
+  # Kaniko cache repo (speeds up repeated layer builds).
+  KANIKO_CACHE_REPO: "${CI_REGISTRY_IMAGE}/cache"
+
+# ── Frontend ─────────────────────────────────────────────────────────────────
+build-frontend:
+  stage: build
+  tags:
+    - k8s
+  # Kaniko debug image includes a shell, required by GitLab's script runner.
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  only:
+    - svt/custom-patches
+  script:
+    # Authenticate to the GitLab container registry.
+    - mkdir -p /kaniko/.docker
+    - |
+      printf '{"auths":{"%s":{"auth":"%s"}}}' \
+        "${CI_REGISTRY}" \
+        "$(printf '%s:%s' "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')" \
+        > /kaniko/.docker/config.json
+
+    - |
+      /kaniko/executor \
+        --context "${CI_PROJECT_DIR}/keep-ui" \
+        --dockerfile "${CI_PROJECT_DIR}/docker/Dockerfile.ui" \
+        --build-arg GIT_COMMIT_HASH="${CI_COMMIT_SHORT_SHA}" \
+        --build-arg KEEP_VERSION="${UPSTREAM_VERSION}-svt" \
+        --destination "${CI_REGISTRY_IMAGE}/keep-frontend:${SVT_IMAGE_TAG}" \
+        --destination "${CI_REGISTRY_IMAGE}/keep-frontend:latest-svt" \
+        --cache=true \
+        --cache-repo="${KANIKO_CACHE_REPO}" \
+        --snapshot-mode=redo \
+        --use-new-run
