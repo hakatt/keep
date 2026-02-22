@@ -6,9 +6,15 @@
 # Images produced:
 #   $CI_REGISTRY_IMAGE/keep-frontend:<UPSTREAM_VERSION>-svt.<pipeline_iid>
 #   $CI_REGISTRY_IMAGE/keep-frontend:latest-svt
+#   $CI_REGISTRY_IMAGE/keep-backend:<UPSTREAM_VERSION>-svt.<pipeline_iid>
+#   $CI_REGISTRY_IMAGE/keep-backend:latest-svt
+#
+# Patches baked in:
+#   frontend  — fix: alert fingerprint modal closes on re-fetch (alerts.tsx)
+#   backend   — fix: grafana provider always sets optional fields
+#             — fix: prometheus provider always sets value/instance/job as ""
 #
 # To add a new patch: commit the change, the next pipeline run picks it up.
-# To add a backend image: duplicate the frontend job, point at docker/Dockerfile.api.
 
 stages:
   - build
@@ -23,19 +29,16 @@ variables:
   # Kaniko cache repo (speeds up repeated layer builds).
   KANIKO_CACHE_REPO: "${CI_REGISTRY_IMAGE}/cache"
 
-# ── Frontend ─────────────────────────────────────────────────────────────────
-build-frontend:
+.build-common: &build-common
   stage: build
   tags:
     - k8s
-  # Kaniko debug image includes a shell, required by GitLab's script runner.
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
   only:
     - svt/custom-patches
-  script:
-    # Authenticate to the GitLab container registry.
+  before_script:
     - mkdir -p /kaniko/.docker
     - |
       printf '{"auths":{"%s":{"auth":"%s"}}}' \
@@ -43,6 +46,10 @@ build-frontend:
         "$(printf '%s:%s' "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')" \
         > /kaniko/.docker/config.json
 
+# ── Frontend ─────────────────────────────────────────────────────────────────
+build-frontend:
+  <<: *build-common
+  script:
     - |
       /kaniko/executor \
         --context "${CI_PROJECT_DIR}/keep-ui" \
@@ -51,6 +58,22 @@ build-frontend:
         --build-arg KEEP_VERSION="${UPSTREAM_VERSION}-svt" \
         --destination "${CI_REGISTRY_IMAGE}/keep-frontend:${SVT_IMAGE_TAG}" \
         --destination "${CI_REGISTRY_IMAGE}/keep-frontend:latest-svt" \
+        --cache=true \
+        --cache-repo="${KANIKO_CACHE_REPO}" \
+        --snapshot-mode=redo \
+        --use-new-run
+
+# ── Backend ──────────────────────────────────────────────────────────────────
+build-backend:
+  <<: *build-common
+  script:
+    - |
+      /kaniko/executor \
+        --context "${CI_PROJECT_DIR}" \
+        --dockerfile "${CI_PROJECT_DIR}/docker/Dockerfile.api" \
+        --build-arg GIT_COMMIT_HASH="${CI_COMMIT_SHORT_SHA}" \
+        --destination "${CI_REGISTRY_IMAGE}/keep-backend:${SVT_IMAGE_TAG}" \
+        --destination "${CI_REGISTRY_IMAGE}/keep-backend:latest-svt" \
         --cache=true \
         --cache-repo="${KANIKO_CACHE_REPO}" \
         --snapshot-mode=redo \
