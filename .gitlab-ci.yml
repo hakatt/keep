@@ -4,10 +4,12 @@
 # Runner:  k8s (Kaniko builds — no Docker daemon required)
 #
 # Images produced:
-#   $CI_REGISTRY_IMAGE/keep-frontend:<UPSTREAM_VERSION>-svt.<pipeline_iid>
-#   $CI_REGISTRY_IMAGE/keep-frontend:latest-svt
-#   $CI_REGISTRY_IMAGE/keep-backend:<UPSTREAM_VERSION>-svt.<pipeline_iid>
-#   $CI_REGISTRY_IMAGE/keep-backend:latest-svt
+#   harbor.support.aurora.svt.se/<namespace>/keep-frontend:<UPSTREAM_VERSION>-svt.<pipeline_iid>
+#   harbor.support.aurora.svt.se/<namespace>/keep-frontend:dev   (auto, Flux watches this)
+#   harbor.support.aurora.svt.se/<namespace>/keep-frontend:prod  (manual promotion)
+#   harbor.support.aurora.svt.se/<namespace>/keep-backend:<UPSTREAM_VERSION>-svt.<pipeline_iid>
+#   harbor.support.aurora.svt.se/<namespace>/keep-backend:dev
+#   harbor.support.aurora.svt.se/<namespace>/keep-backend:prod
 #
 # Patches baked in:
 #   frontend  — fix: alert fingerprint modal closes on re-fetch (alerts.tsx)
@@ -18,6 +20,7 @@
 
 stages:
   - build
+  - tag
 
 variables:
   # Match the upstream release this branch is based on.
@@ -26,8 +29,15 @@ variables:
   # Derived tag — e.g. 0.49.0-svt.12
   SVT_IMAGE_TAG: "${UPSTREAM_VERSION}-svt.${CI_PIPELINE_IID}"
 
+  DOCKER_REGISTRY:  "harbor.support.aurora.svt.se"
+  REGISTRY_MIRROR:  "docker-hub-proxy.support.aurora.svt.se"
+
+  # Images land at harbor.support.aurora.svt.se/<namespace>/keep-frontend etc.
+  FRONTEND_IMAGE:   "${DOCKER_REGISTRY}/${CI_PROJECT_NAMESPACE}/keep-frontend"
+  BACKEND_IMAGE:    "${DOCKER_REGISTRY}/${CI_PROJECT_NAMESPACE}/keep-backend"
+
   # Kaniko cache repo (speeds up repeated layer builds).
-  KANIKO_CACHE_REPO: "${CI_REGISTRY_IMAGE}/cache"
+  KANIKO_CACHE_REPO: "${DOCKER_REGISTRY}/${CI_PROJECT_NAMESPACE}/keep-cache"
 
 .build-common: &build-common
   stage: build
@@ -41,10 +51,23 @@ variables:
   before_script:
     - mkdir -p /kaniko/.docker
     - |
-      printf '{"auths":{"%s":{"auth":"%s"}}}' \
-        "${CI_REGISTRY}" \
-        "$(printf '%s:%s' "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')" \
+      printf '{"auths":{"%s":{"username":"%s","password":"%s"}}}' \
+        "${DOCKER_REGISTRY}" \
+        "${AURORA_HARBOR_USER}" \
+        "${AURORA_HARBOR_PASS}" \
         > /kaniko/.docker/config.json
+
+.tag-common: &tag-common
+  stage: tag
+  tags:
+    - k8s
+  image:
+    name: gcr.io/go-containerregistry/crane:latest
+    entrypoint: [""]
+  only:
+    - svt/custom-patches
+  before_script:
+    - crane auth login "${DOCKER_REGISTRY}" -u "${AURORA_HARBOR_USER}" -p "${AURORA_HARBOR_PASS}"
 
 # ── Frontend ─────────────────────────────────────────────────────────────────
 build-frontend:
@@ -56,8 +79,8 @@ build-frontend:
         --dockerfile "${CI_PROJECT_DIR}/docker/Dockerfile.ui" \
         --build-arg GIT_COMMIT_HASH="${CI_COMMIT_SHORT_SHA}" \
         --build-arg KEEP_VERSION="${UPSTREAM_VERSION}-svt" \
-        --destination "${CI_REGISTRY_IMAGE}/keep-frontend:${SVT_IMAGE_TAG}" \
-        --destination "${CI_REGISTRY_IMAGE}/keep-frontend:latest-svt" \
+        --destination "${FRONTEND_IMAGE}:${SVT_IMAGE_TAG}" \
+        --registry-mirror="${REGISTRY_MIRROR}" \
         --cache=true \
         --cache-repo="${KANIKO_CACHE_REPO}" \
         --snapshot-mode=redo \
@@ -72,9 +95,26 @@ build-backend:
         --context "${CI_PROJECT_DIR}" \
         --dockerfile "${CI_PROJECT_DIR}/docker/Dockerfile.api" \
         --build-arg GIT_COMMIT_HASH="${CI_COMMIT_SHORT_SHA}" \
-        --destination "${CI_REGISTRY_IMAGE}/keep-backend:${SVT_IMAGE_TAG}" \
-        --destination "${CI_REGISTRY_IMAGE}/keep-backend:latest-svt" \
+        --destination "${BACKEND_IMAGE}:${SVT_IMAGE_TAG}" \
+        --registry-mirror="${REGISTRY_MIRROR}" \
         --cache=true \
         --cache-repo="${KANIKO_CACHE_REPO}" \
         --snapshot-mode=redo \
         --use-new-run
+
+# ── Tag: dev (automatic — Flux watches this tag) ─────────────────────────────
+tag-dev:
+  <<: *tag-common
+  needs: [build-frontend, build-backend]
+  script:
+    - crane tag "${FRONTEND_IMAGE}:${SVT_IMAGE_TAG}" dev
+    - crane tag "${BACKEND_IMAGE}:${SVT_IMAGE_TAG}" dev
+
+# ── Tag: prod (manual promotion) ─────────────────────────────────────────────
+tag-prod:
+  <<: *tag-common
+  needs: [build-frontend, build-backend]
+  when: manual
+  script:
+    - crane tag "${FRONTEND_IMAGE}:${SVT_IMAGE_TAG}" prod
+    - crane tag "${BACKEND_IMAGE}:${SVT_IMAGE_TAG}" prod
