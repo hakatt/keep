@@ -47,7 +47,7 @@ variables:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
   only:
-    - svt/custom-patches
+    - svt-main
   before_script:
     - mkdir -p /kaniko/.docker
     - |
@@ -65,7 +65,7 @@ variables:
     name: gcr.io/go-containerregistry/crane:latest
     entrypoint: [""]
   only:
-    - svt/custom-patches
+    - svt-main
   before_script:
     - crane auth login "${DOCKER_REGISTRY}" -u "${AURORA_HARBOR_USER}" -p "${AURORA_HARBOR_PASS}"
 
