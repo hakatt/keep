@@ -19,6 +19,7 @@
 # To add a new patch: commit the change, the next pipeline run picks it up.
 
 stages:
+  - test
   - build
   - tag
 
@@ -38,6 +39,28 @@ variables:
 
   # Kaniko cache repo (speeds up repeated layer builds).
   KANIKO_CACHE_REPO: "${DOCKER_REGISTRY}/${CI_PROJECT_NAMESPACE}/keep-cache"
+
+# ── Frontend unit tests + typecheck ──────────────────────────────────────────
+test-frontend:
+  stage: test
+  tags:
+    - k8s
+  image:
+    name: node:20-alpine
+    entrypoint: [""]
+  only:
+    - svt-main
+  cache:
+    key:
+      files:
+        - keep-ui/package-lock.json
+    paths:
+      - keep-ui/node_modules/
+  script:
+    - cd "${CI_PROJECT_DIR}/keep-ui"
+    - npm ci --noproxy registry.npmjs.org --maxsockets 1
+    - npm run typecheck
+    - npm test -- --ci --forceExit
 
 .build-common: &build-common
   stage: build
@@ -62,7 +85,7 @@ variables:
   tags:
     - k8s
   image:
-    name: gcr.io/go-containerregistry/crane:latest
+    name: gcr.io/go-containerregistry/crane:debug
     entrypoint: [""]
   only:
     - svt-main
