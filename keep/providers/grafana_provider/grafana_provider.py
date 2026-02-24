@@ -368,7 +368,7 @@ class GrafanaProvider(BaseTopologyProvider, ProviderHealthMixin):
             # templates can reference them safely without triggering
             # render_context safe=True errors.
             for _field in ("instance", "value", "panelUrl", "dashboardUrl",
-                           "silenceURL", "valueString", "datasource"):
+                           "valueString", "datasource"):
                 if not getattr(alert_dto, _field, None):
                     setattr(alert_dto, _field, "")
             formatted_alerts.append(alert_dto)
