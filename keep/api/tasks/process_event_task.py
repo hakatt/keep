@@ -28,6 +28,7 @@ from keep.api.core.db import (
     get_alerts_by_fingerprint,
     get_all_presets_dtos,
     get_enrichment_with_session,
+    get_installed_providers,
     get_last_alert_hashes_by_fingerprints,
     get_session_sync,
     get_started_at_for_alerts,
@@ -769,6 +770,31 @@ def process_event(
 
             with tracer.start_as_current_span("process_event_internal_preparation"):
                 __internal_prepartion(event, fingerprint, api_key_name)
+
+            # Stamp providerName on every alert so workflows can reference
+            # {{ alert.providerName }} without extra API calls.
+            # Priority: provider.name (DB) → "{type}-{id}" → provider_type
+            with tracer.start_as_current_span("process_event_stamp_provider_name"):
+                _provider_name: str | None = None
+                if provider_id:
+                    try:
+                        _providers = get_installed_providers(tenant_id)
+                        _match = next(
+                            (p for p in _providers if p.id == provider_id), None
+                        )
+                        if _match:
+                            _provider_name = _match.name
+                        elif provider_type:
+                            _provider_name = f"{provider_type}-{provider_id}"
+                        else:
+                            _provider_name = provider_id
+                    except Exception:
+                        logger.warning("Failed to resolve provider name", exc_info=True)
+                if _provider_name is None and provider_type:
+                    _provider_name = provider_type
+                for alert in event:
+                    if isinstance(alert, AlertDto) and alert.providerName is None:
+                        alert.providerName = _provider_name
 
             formatted_events = __handle_formatted_events(
                 tenant_id,
