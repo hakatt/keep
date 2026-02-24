@@ -364,6 +364,13 @@ class GrafanaProvider(BaseTopologyProvider, ProviderHealthMixin):
             for label in labels:
                 if getattr(alert_dto, label, None) is None:
                     setattr(alert_dto, label, labels[label])
+            # Always set Grafana-specific fields to "" when absent so workflow
+            # templates can reference them safely without triggering
+            # render_context safe=True errors.
+            for _field in ("instance", "value", "panelUrl", "dashboardUrl",
+                           "silenceURL", "valueString", "datasource"):
+                if not getattr(alert_dto, _field, None):
+                    setattr(alert_dto, _field, "")
             formatted_alerts.append(alert_dto)
         return formatted_alerts
 
