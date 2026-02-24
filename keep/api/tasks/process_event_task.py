@@ -790,10 +790,10 @@ def process_event(
                             _provider_name = provider_id
                     except Exception:
                         logger.warning("Failed to resolve provider name", exc_info=True)
-                if _provider_name is None and provider_type:
-                    _provider_name = provider_type
+                if _provider_name is None:
+                    _provider_name = provider_type or ""
                 for alert in event:
-                    if isinstance(alert, AlertDto) and alert.providerName is None:
+                    if isinstance(alert, AlertDto) and not alert.providerName:
                         alert.providerName = _provider_name
 
             formatted_events = __handle_formatted_events(
