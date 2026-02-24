@@ -165,6 +165,54 @@ beforeEach(() => {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
+describe("Alerts — fingerprint modal fix (dataSettled guard)", () => {
+  it("does NOT fire error when alerts is briefly empty but totalCount > 0 (stale-empty SWR flash)", async () => {
+    // Regression test for the 3-render cascade in useLastAlerts:
+    // SWR marks isLoading=false before the React state carrying the real results
+    // has been flushed. For one render, alerts=[] while totalCount is already
+    // the real count (>0). The fix: only act when alerts.length>0 OR totalCount===0.
+
+    const alert = makeAlert("fp-stale");
+
+    mockSearchParamsGet.mockImplementation((key: string) =>
+      key === "alertPayloadFingerprint" ? "fp-stale" : null
+    );
+
+    // Phase 1 — stale-empty flash: alerts=[], alertsLoading=false, totalCount=5
+    (useAlertsTableData as jest.Mock).mockReturnValue({
+      ...baseAlertsData,
+      alerts: [],
+      alertsLoading: false,
+      totalCount: 5,
+    });
+
+    const { rerender } = render(
+      <Alerts presetName="feed" initialFacets={[]} />
+    );
+
+    // No error should fire during the stale-empty phase.
+    await waitFor(() => {
+      expect(showErrorToast).not.toHaveBeenCalled();
+    });
+
+    // Phase 2 — real data arrives: alerts=[alert], totalCount=1
+    (useAlertsTableData as jest.Mock).mockReturnValue({
+      ...baseAlertsData,
+      alerts: [alert],
+      alertsLoading: false,
+      totalCount: 1,
+    });
+
+    await act(async () => {
+      rerender(<Alerts presetName="feed" initialFacets={[]} />);
+    });
+
+    // Modal should open and still no error.
+    expect(showErrorToast).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+});
+
 describe("Alerts — fingerprint modal fix (resolvedFingerprintRef)", () => {
   it("opens view modal when fingerprint is found and shows no error", async () => {
     const alert = makeAlert("fp-abc");
